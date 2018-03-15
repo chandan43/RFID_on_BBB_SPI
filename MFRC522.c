@@ -112,12 +112,38 @@ enum PCD_Reg {
 	  Reserved33         = 0x3E
 	  Reserved34 	     = 0x3F	
 };
+
+/*GPIO Registers*/
+enum GPIO_OMAP_Reg { 
+	OMAP_GPIO_OE 	       = 0x0134
+	OMAP_GPIO_SETDATAOUT   = 0x0194
+	OMAP_GPIO_CLEARDATAOUT = 0x0190
+	OMAP_GPIO_DATAIN       = 0x0138
+};
+
+/*GPIO Base Addresses */
+enum GPIO_BASE_Addr {
+	GPIO0		       = 0x44E06000
+        GPIO1		       = 0x4804C000
+	GPIO2		       = 0x481AC000
+	GPIO3		       = 0x481AE000
+};
+
+static void gpio_pin_init(void)
+{
+	unsigned int data = 0;
+
+	data = readl_relaxed(GPIO0 + OMAP_GPIO_OE);
+	data = data & 0xFFFFFFFF;
+	pr_debug("GPIO Init: Direction of pin is set: %x\n",data);
+	writel_relaxed(data, gbank_base + OMAP_GPIO_OE);
+}
 /* -----------------------------------------------------------------
  * Read from a register
  * -----------------------------------------------------------------*/
 static int mfrc522_read_value(struct spi_device *spi, u8 reg)
 {
-	reg = 0x80 | reg;
+	reg = (reg & 0x7E) | 0x80;
 	pr_debug("%s: Value : %d\n",spi_w8r8(spi,reg));
 	return spi_w8r8(spi,reg);
 }
@@ -129,7 +155,7 @@ static int mfrc522_write_value(struct spi_device *spi, u8 reg,u8 value)
 {
 	unsigned char buf[2];
  
-	buf[0] = reg & 0x7f;
+	buf[0] = reg & 0x7E;
 	buf[1] = value;
 	pr_debug("%s: Value : %d\n",spi_write_then_read(spi, buf, 2, NULL, 0));
 	return spi_write_then_read(spi, buf, 2, NULL, 0);
