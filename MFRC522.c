@@ -10,6 +10,7 @@
 #include <linux/jiffies.h>
 #include <linux/delay.h>
 
+#define RST 10
 /*command overview : pg 70 :PDC(Proximity Coupling Device)*/
 enum PDC_CMD {
 	PCD_IDLE       = 0x00       //	No action, cancels current command execution
@@ -129,14 +130,37 @@ enum GPIO_BASE_Addr {
 	GPIO3		       = 0x481AE000
 };
 
-static void gpio_pin_init(void)
+/*MIFARE Status */
+enum Status {
+	MI_OK       = 0
+	MI_NOTAGERR = 1
+	MI_ERR      = 2
+};
+
+struct spi_dev {
+
+	struct spi_device       *spi;
+	
+	/* for status readback */
+
+	struct spi_transfer     status;
+	struct spi_message      readback;
+};
+
+static void gpio_init_and_set(void)
 {
 	unsigned int data = 0;
 
 	data = readl_relaxed(GPIO0 + OMAP_GPIO_OE);
-	data = data & 0xFFFFFFFF;
+	data = data & 0xFFFFFDFF;
 	pr_debug("GPIO Init: Direction of pin is set: %x\n",data);
 	writel_relaxed(data, gbank_base + OMAP_GPIO_OE);
+
+	data = data | (1U << RST);
+
+	pr_debug("GPIO Set: Direction of pin is set: %x\n",data);
+
+	writel_relaxed(data, gbank_base + OMAP_GPIO_SETDATAOUT); //High
 }
 /* -----------------------------------------------------------------
  * Read from a register
@@ -160,10 +184,90 @@ static int mfrc522_write_value(struct spi_device *spi, u8 reg,u8 value)
 	pr_debug("%s: Value : %d\n",spi_write_then_read(spi, buf, 2, NULL, 0));
 	return spi_write_then_read(spi, buf, 2, NULL, 0);
 }
+/* -----------------------------------------------------------------
+ * MFRC522 reset function
+ * -----------------------------------------------------------------*/
+static void MFRC522_Reset(static spi_device *spi)
+{
+	struct spi_dev *dev = spi_set_drvdata(spi);
+	mfrc522_write_value(dev->spi,CommandReg,PCD_RESETPHASE);
+	dev_info(&spi->dev,"Device Reset successfull\n");
+}
+
+/* -----------------------------------------------------------------
+ * Set and clear BIT Mask
+ * -----------------------------------------------------------------*/
+static void  SetBitMask(static spi_device *spi,u8 reg,u8 mask)
+{
+	int temp = mfrc522_read_value(spi, reg);
+	pr_debug("SeTBitMask: is %x\n",temp);
+	mfrc522_write_value(spi, reg ,temp | mask);
+}
+static void  ClearBitMask(static spi_device *spi,u8 reg,u8 mask)
+{
+	int temp = mfrc522_read_value(spi, reg);
+	pr_debug("ClearBitMask: is %x\n",temp);
+	mfrc522_write_value(spi, reg, temp & (~mask));
+}
 
 
+/* -----------------------------------------------------------------
+ * Antenna ON/OFF Function
+ * -----------------------------------------------------------------*/
+static void AntennaOn(static spi_device *spi)
+{
+	int temp = mfrc522_read_value(spi, TxControlReg);
+	pr_debug("Antenna Reg Value %d\n",temp & 0x03);
+	if (~(temp & 0x03))
+		SeTBitMask(spi, TxControlReg, 0x03);
+}
+
+static void Antennaoff(static spi_device *spi)
+{
+	ClearBitMask(spi,TxControlReg,0x03);
+}
+
+static int MFRC522_ToCard(static spi_device *spi,u8 command,int sendData)
+{
+	int backData[10];
+	int backLen = 0
+	int status = MI_ERR;
+	int lastBits;
+	u8 irqEn = 0x00;
+	u8  waitIRq = 0x00;
+	int i = 0;
+	int n = 0; 
+	
+	
+	if (command == PCD_AUTHENT) {
+		irqEn = 0x12;
+		waitIRq = 0x10;      //IdleIEn
+	}
+	if (command == PCD_TRANSCEIVE) {
+		irqEn = 0x77;   //
+                waitIRq = 0x30; //RxIEn | IdleIEn
+	}
+	
+	
+}
 static int mfrc522_probe(struct spi_device *spi)
 {
+	int status;
+	struct spi_dev *dev; 
+	/*setup SPI mode and clock rate*/            
+        status = spi_setup(spi);
+        if (status < 0) { 
+                dev_dbg(&spi->dev, "needs SPI mode %02x, %d KHz; %d\n",
+                                spi->mode, spi->max_speed_hz / 1000,
+                                status);
+                return status;
+        }    
+	
+	dev = (status spi_dev*)kmalloc(sizeof(struct spi_dev), GFP_KERNEL);	
+	dev->spi = spi;
+	
+	/* device driver data */
+	spi_set_drvdata(spi, dev);
 	return 0;
 }
 

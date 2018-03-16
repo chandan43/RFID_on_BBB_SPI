@@ -17,7 +17,7 @@
         /*DT node for mfrc522 spi chip*/
         adxl345:  mfrc522@0 {
                 compatible = "RFID,MFRC522";
-                spi-max-frequency = <50000>;
+                spi-max-frequency = <1000000>;
                 reg = <0x0>;
         };
 };
