@@ -137,6 +137,8 @@ enum Status {
 	MI_ERR      = 2
 };
 
+#define MAX_LEN 16
+
 struct spi_dev {
 
 	struct spi_device       *spi;
@@ -227,7 +229,7 @@ static void Antennaoff(static spi_device *spi)
 	ClearBitMask(spi,TxControlReg,0x03);
 }
 
-static int MFRC522_ToCard(static spi_device *spi,u8 command,int sendData)
+static int MFRC522_ToCard(static spi_device *spi,u8 command,int *sendData)
 {
 	int backData[10];
 	int backLen = 0
@@ -237,18 +239,67 @@ static int MFRC522_ToCard(static spi_device *spi,u8 command,int sendData)
 	u8  waitIRq = 0x00;
 	int i = 0;
 	int n = 0; 
-	
-	
+		
+	/*Page 38: ComIEnReg register*/
 	if (command == PCD_AUTHENT) {
 		irqEn = 0x12;
 		waitIRq = 0x10;      //IdleIEn
 	}
 	if (command == PCD_TRANSCEIVE) {
-		irqEn = 0x77;   //
+		irqEn = 0x77;   
                 waitIRq = 0x30; //RxIEn | IdleIEn
 	}
 	
+	mfrc522_write_value(spi, CommIEnReg, irqEn|0x80);
+	SeTBitMask(spi, CommIEnReg, 0x80);
+	ClearBitMask(spi, FIFOLevelReg, 0x80); //immediately clears the internal FIFO buffer’s
+
+	/*No action, cancels current command Execution */
+	mfrc522_write_value(spi, CommandReg, PCD_IDLE); 
+
+	while (i < strlen(sendData))
+		mfrc522_write_value(spi, FIFODataReg, sendData[i++]);
+		
+	mfrc522_write_value(spi, CommandReg, command);
+
+	if (command == PCD_TRANSCEIVE)
+		SeTBitMask(spi, BitFramingReg, 0x80); //page: 46
 	
+	/*waiting for valid cmd*/
+	while(1) {
+		n = mfrc522_read_value(spi, CommIrqReg);
+		i--;
+		if ((i != 0) && (~(n & 0x01)) && (~(n & waitIRq)))
+			break;
+	}
+	ClearBitMask(spi, BitFramingReg, 0x80); //page: 46
+
+	if (i != 0) {
+		if (mfrc522_read_value(spi,ErrorReg) & 0x1B == 0x00) 
+				status = MI_OK;
+		if (n & irqEn & 0x01)
+				status = MI_NOTAGERR;
+		if (command == PCD_TRANSCEIVE) {
+			n = mfrc522_read_value(spi , FIFOLevelReg);
+			lastBits = mfrc522_read_value(spi, ControlReg) & 0x07; //pg 45
+			if (lastBits != 0)
+				backLen = (n-1)*8 + lastBits;
+			else 
+				backLen = n*8;
+			if (n == 0)
+				n = 1;
+			if (n > MAX_LEN)
+				n = MAX_LEN;
+			i = 0;
+
+			while (i < n)
+				backData[i++] = mfrc522_read_value(spi, FIFODataReg);
+		}
+	}else{ 
+			status = MI_ERR 
+	}
+
+	return TODO:--
 }
 static int mfrc522_probe(struct spi_device *spi)
 {
