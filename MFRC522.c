@@ -143,10 +143,10 @@ struct spi_dev {
 
 	struct spi_device       *spi;
 	
-	/* for status readback */
+	/* for Device status*/
 
-	struct spi_transfer     status;
-	struct spi_message      readback;
+	int     status;
+	int     backLen;
 };
 
 static void gpio_init_and_set(void)
@@ -229,17 +229,18 @@ static void Antennaoff(static spi_device *spi)
 	ClearBitMask(spi,TxControlReg,0x03);
 }
 
-static int MFRC522_ToCard(static spi_device *spi,u8 command,int *sendData)
+static int *MFRC522_ToCard(static spi_device *spi,u8 command,int *sendData)
 {
-	int backData[10];
-	int backLen = 0
-	int status = MI_ERR;
+	int *backData; 
 	int lastBits;
 	u8 irqEn = 0x00;
 	u8  waitIRq = 0x00;
 	int i = 0;
 	int n = 0; 
 		
+	struct spi_dev *dev = spi_set_drvdata(spi);
+	dev->status = MI_ERR;
+	dev->backLen = 0;
 	/*Page 38: ComIEnReg register*/
 	if (command == PCD_AUTHENT) {
 		irqEn = 0x12;
@@ -276,30 +277,78 @@ static int MFRC522_ToCard(static spi_device *spi,u8 command,int *sendData)
 
 	if (i != 0) {
 		if (mfrc522_read_value(spi,ErrorReg) & 0x1B == 0x00) 
-				status = MI_OK;
+				dev->status = MI_OK;
 		if (n & irqEn & 0x01)
-				status = MI_NOTAGERR;
+				dev->status = MI_NOTAGERR;
 		if (command == PCD_TRANSCEIVE) {
 			n = mfrc522_read_value(spi , FIFOLevelReg);
 			lastBits = mfrc522_read_value(spi, ControlReg) & 0x07; //pg 45
-			if (lastBits != 0)
-				backLen = (n-1)*8 + lastBits;
+			if (lastBits != 0) 
+				dev->backLen = (n-1) * 8 + lastBits;
 			else 
-				backLen = n*8;
+				dev->backLen = n*8;
 			if (n == 0)
 				n = 1;
 			if (n > MAX_LEN)
 				n = MAX_LEN;
 			i = 0;
-
+			
+			backData = (int *)kmalloc(n, GFP_KERNEL);
 			while (i < n)
 				backData[i++] = mfrc522_read_value(spi, FIFODataReg);
 		}
 	}else{ 
-			status = MI_ERR 
+			dev->status = MI_ERR 
 	}
 
-	return TODO:--
+	return backData;
+}
+static int MFRC522_Request(struct spi_device *spi,int reqMode)
+{
+	int status;
+	int backBits;
+	int TagType[1];
+	
+	struct spi_dev *dev = spi_set_drvdata(spi);
+	
+	mfrc522_write_value(spi, BitFramingReg, 0x07);
+	TagType[0] = reqMode;
+	
+	MFRC522_ToCard(spi, PCD_TRANSCEIVE, TagType);
+
+	if ((dev->status != MI_OK) | (dev->backLen != 0x10))
+		dev->status = MI_ERR;
+	
+	return dev->status;
+}
+
+static MFRC522_Anticoll(struct spi_device *spi)
+{
+	int *backData;
+	int serNumCheck = 0;
+	int serNum[2];
+	
+	struct spi_dev *dev = spi_set_drvdata(spi);
+
+	mfrc522_write_value(spi , BitFramingReg, 0x00);
+
+	serNum[0] = PICC_ANTICOLL;
+	serNum[1] = 0x20;
+
+	backData = MFRC522_ToCard(PCD_TRANSCEIVE, serNum);
+
+	if (dev->status == MI_OK) {
+		int i = 0;
+		if (strlen(backData) == 5)
+			while (i < 4) {
+				serNumCheck = serNumCheck ^ backData[i++];
+			}
+			if (serNumCheck != backData[i])
+				dev->status = MI_ERR;
+			else dev->status = MI_OK;
+	}
+
+	return // TODO:
 }
 static int mfrc522_probe(struct spi_device *spi)
 {
