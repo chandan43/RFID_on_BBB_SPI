@@ -23,7 +23,7 @@ enum PDC_CMD {
 };
 
 /* Commands sent to the PICC (Proximity Integrated Circuit Card).*/
-/*The commands used by the PCD to manage communication with several PICCs (ISO 14443-3, Type A, section 6.4)*/
+/*The commands used by the PCD to manage communication with several PICCs (ISO 14443-3, Type A, section 6.4 pg 12)*/
 enum PICC_CMD {
 	PICC_REQIDL    = 0x26
   	PICC_REQALL    = 0x52
@@ -321,8 +321,8 @@ static int MFRC522_Request(struct spi_device *spi,int reqMode)
 	
 	return dev->status;
 }
-
-static MFRC522_Anticoll(struct spi_device *spi)
+/*Anticollision : */
+static int *MFRC522_Anticoll(struct spi_device *spi)
 {
 	int *backData;
 	int serNumCheck = 0;
@@ -333,7 +333,7 @@ static MFRC522_Anticoll(struct spi_device *spi)
 	mfrc522_write_value(spi , BitFramingReg, 0x00);
 
 	serNum[0] = PICC_ANTICOLL;
-	serNum[1] = 0x20;
+	serNum[1] = 0x20;  // page 14 
 
 	backData = MFRC522_ToCard(PCD_TRANSCEIVE, serNum);
 
@@ -348,7 +348,106 @@ static MFRC522_Anticoll(struct spi_device *spi)
 			else dev->status = MI_OK;
 	}
 
-	return // TODO:
+	return backData;
+}
+
+
+/*Calculate CRC :*/
+
+static int CalulateCRC(struct spi_device *spi, int *pIndata)
+{
+	int n, i = 0;
+	int pOutData[2];
+	ClearBitMask(spi, DivIrqReg, 0x04); // page 40
+	SeTBitMask(spi, FIFOLevelReg, 0x80);
+
+	while (i < strlen(pIndata)) {
+		mfrc522_write_value(spi, FIFODataReg, pIndata[i++]);
+	}
+		
+	mfrc522_write_value(spi, CommandReg, PCD_CALCCRC);
+	i = 0xFF;
+
+	while (1) {
+		n = mfrc522_read_value(spi, DivIrqReg);
+		i--;
+		if ((i == 0) && (n & 0x04)) //TODO
+			break;
+	}
+
+	pOutData[0] = mfrc522_read_value(spi, CRCResultRegL);
+	pOutData[1] = mfrc522_read_value(spi, CRCResultRegM);
+	return pOutData;
+}
+
+static int MFRC522_SelectTag(struct spi_device *spi, int serNum)
+{
+	int *backData;
+	int buff[10];
+	int pOut[2];
+	int j = 2, i = 0;
+
+	struct spi_dev *dev = spi_set_drvdata(spi);
+
+	buff[0] = PICC_SElECTTAG;
+	buff[1] = 0x70;
+
+	while (i < 5) {
+		buff[j++] = serNum[i++];
+	}
+	pOut = CalulateCRC(spi, buf);
+
+	buff[j] = pOut[0];
+	buff[++j] = pOut[1];
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buf);
+
+	if ((dev->status == MI_OK) && (dev->backLen == 0x18))
+		return backData[0];
+	else 
+		return 0;
+
+}
+static int MFRC522_Auth(static spi_device *spi, int authMode, 
+			int BlockAddr, int *Sectorkey, int *serNum) 
+{
+	int buff[16];
+	int j =2,i = 0;	
+	
+	struct spi_dev *dev = spi_set_drvdata(spi);
+	/*First byte should be the authMode (A or B)*/
+	buff[0] = authMode;
+	
+	/*Second byte is the trailerBlock (usually 7)*/
+	buff[1] = BlockAddr;
+
+	/*Now we need to append the authKey which usually is 6 bytes of 0xFF */
+
+	while (i < strlen(Sectorkey)) {
+		buff[j++] = Sectorkey[i++];
+	}
+
+	i = 0;
+
+	/*Next we append the first 4 bytes of the UID*/
+	while (i < 4)
+		buff[j++] = serNum[i];
+
+	/*Now we start the authentication itself*/
+
+	MFRC522_ToCard(spi, PCD_AUTHENT,buff);
+
+	/*Check if an error occurred */
+	if (dev->status != MI_OK) {
+		pr_err("%S: AUTHENTICATION ERROR !\n",__func__);
+		pr_debug("%s: AUTHENTICATION ERROR ! And Error type %d\n",__func__,dev->status);
+	}
+	
+	if ((mfrc522_read_value(spi, Status2Reg) &  0x08) == 0) { //TODO
+		pr_err("%S: AUTHENTICATION ERROR ! (status2reg & 0x08) == 0\n",__func__);
+	}
+	
+	/*Return the status*/
+	return dev->status;
 }
 static int mfrc522_probe(struct spi_device *spi)
 {
