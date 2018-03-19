@@ -11,6 +11,9 @@
 #include <linux/delay.h>
 
 #define RST 10
+/*Debug*/
+#define DEBUG 1 
+
 /*command overview : pg 70 :PDC(Proximity Coupling Device)*/
 enum PDC_CMD {
 	PCD_IDLE       = 0x00       //	No action, cancels current command execution
@@ -407,6 +410,7 @@ static int MFRC522_SelectTag(struct spi_device *spi, int serNum)
 		return 0;
 
 }
+
 static int MFRC522_Auth(static spi_device *spi, int authMode, 
 			int BlockAddr, int *Sectorkey, int *serNum) 
 {
@@ -448,6 +452,108 @@ static int MFRC522_Auth(static spi_device *spi, int authMode,
 	
 	/*Return the status*/
 	return dev->status;
+}
+/* Indicates that the MIFARE Crypto1 unit is switched on and
+ * therefore all data communication with the card is encrypted
+ * can only be set to logic 1 by a successful execution of the
+ * MFAuthent command 
+ */
+static void MFRC522_StopCrypto1(struct spi_device *spi)
+{
+#if DEBUG 
+	pr_debug("%s: StopCryptol\n",__func__);
+#endif 
+	ClearBitMask(spi, Status2Reg, 0x08); //Page 43
+}
+
+static void MFRC522_Read(struct spi_device *spi, int blockAddr)
+{
+	int  recvData[4]; 
+	int pOut[2];
+	int *backData;
+	
+	struct spi_dev *dev = spi_set_drvdata(spi);
+#if DEBUG
+	pr_debug("%s: Block Address %2X\n",__func__,blockAddr);
+#endif
+	recvData[0] = PICC_READ;
+	recvData[1] = blockAddr;
+
+	pOut = CalulateCRC(spi,recvData);
+	
+	recvData[2] = pOut[0];
+	recvData[3] = pOut[1];
+	
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, recvData);
+	
+	if(dev->status != MI_OK )
+		pr_err("%s: Error while reading!\n",__func__);
+	
+	if(strlen(backData) == 16)
+		pr_info("Sector %2X Data %s\n",blockAddr,backData);	
+		
+}
+
+static void MFRC522_Write(struct spi_device *spi,
+				int blockAddr, int *writeData)
+{
+	int buff[18];
+	int crc[2];
+	int *backData;
+	int i = 0; 
+	struct spi_dev *dev = spi_set_drvdata(spi);
+#if DEBUG
+	pr_debug("%s: Block Address %2X and Data: %2X \n",__func__,blockAddr,writeData[0]);
+#endif
+	
+	buff[0] = PICC_WRITE;
+	buff[1] = blockAddr;
+	
+	crc =  CalulateCRC(spi,buff);
+	
+	buff[2] = crc[0];
+	buff[3] = crc[1];
+
+	
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff);
+	
+	if ((dev->status != MI_OK) || (dev->backLen != 4) || (backData[0] & 0x0F) != 0x0A)
+			dev->status = MI_ERR;
+	pr_info("BackLen %d"); //TODO
+
+	if (dev->status == MI_OK) {
+		
+		while (i < 16){
+			buff[i] = writeData[i];
+			i++;
+		}
+		crc = CalulateCRC(spi,buff);
+		buff[16] = crc[0];
+		buff[17] = crc[1];
+	
+		backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff);
+		if ((dev->status != MI_OK) || (dev->backLen != 4) || (backData[0] & 0x0F) != 0x0A)
+			pr_info("%s: Error while writing. !\n",__func__);
+		if (dev->status == MI_OK)
+			pr_info("%s: Data written successful\n",__func__);
+	}
+}
+static void MFRC522_DumpClassic1K(struct spi_device *spi, int *key, int *uid)
+{
+	int i = 0; 
+	int status;
+#if DEBUG 
+	pr_debug("%s: DumpClassic1K \n",__func__);
+#endif 
+	while (i < 64) {
+		status =  MFRC522_Auth(spi, PICC_AUTHENT1A, i, key, uid);
+		/*Check if authenticated*/
+		if (status == MI_OK)
+			MFRC522_Read(i);
+		else
+			pr_err("%s: Authentication error\n");
+		i++;
+	}
 }
 static int mfrc522_probe(struct spi_device *spi)
 {
