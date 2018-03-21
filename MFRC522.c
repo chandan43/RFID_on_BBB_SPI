@@ -363,14 +363,15 @@ static int *MFRC522_Anticoll(struct spi_device *spi)
 
 /*Calculate CRC :*/
 
-static int *CalulateCRC(struct spi_device *spi, int *pIndata)
+static int *CalulateCRC(struct spi_device *spi,
+				int *pIndata,int inputdataLen)
 {
 	int n, i = 0;
 	int pOutData[2];
 	ClearBitMask(spi, DivIrqReg, 0x04); // page 40
 	SetBitMask(spi, FIFOLevelReg, 0x80);
 
-	while (i < ARRAY_SIZE(pIndata)) {
+	while (i < inputdataLen) {
 		mfrc522_write_value(spi, FIFODataReg, pIndata[i++]);
 	}
 		
@@ -404,7 +405,7 @@ static int MFRC522_SelectTag(struct spi_device *spi, int *serNum)
 	while (i < 5) {
 		buff[j++] = serNum[i++];
 	}
-	pOut = CalulateCRC(spi, buff);
+	pOut = CalulateCRC(spi, buff, 7);
 
 	buff[j] = pOut[0];
 	buff[++j] = pOut[1];
@@ -485,7 +486,7 @@ static void MFRC522_Read(struct spi_device *spi, int blockAddr)
 	recvData[0] = PICC_READ;
 	recvData[1] = blockAddr;
 
-	pOut = CalulateCRC(spi,recvData);
+	pOut = CalulateCRC(spi,recvData,2);
 	
 	recvData[2] = pOut[0];
 	recvData[3] = pOut[1];
@@ -515,7 +516,7 @@ static void MFRC522_Write(struct spi_device *spi,
 	buff[0] = PICC_WRITE;
 	buff[1] = blockAddr;
 	
-	crc =  CalulateCRC(spi,buff);
+	crc =  CalulateCRC(spi,buff,2);
 	
 	buff[2] = crc[0];
 	buff[3] = crc[1];
@@ -533,7 +534,7 @@ static void MFRC522_Write(struct spi_device *spi,
 			buff[i] = writeData[i];
 			i++;
 		}
-		crc = CalulateCRC(spi,buff);
+		crc = CalulateCRC(spi,buff,16);
 		buff[16] = crc[0];
 		buff[17] = crc[1];
 	
