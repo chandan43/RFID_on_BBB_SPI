@@ -569,6 +569,18 @@ static void MFRC522_DumpClassic1K(struct spi_device *spi, int *key, int *uid)
 		i++;
 	}
 }
+static void MFRC522_Init(struct spi_device *spi)
+{
+	gpio_init_and_set();
+	MFRC522_Reset(spi);
+	mfrc522_write_value(spi, TModeReg, 0x8D);
+	mfrc522_write_value(spi, TPrescalerReg, 0x3E);
+	mfrc522_write_value(spi, TReloadRegL, 30);
+	mfrc522_write_value(spi, TReloadRegH, 0);
+	mfrc522_write_value(spi, TxAutoReg, 0x40);
+	mfrc522_write_value(spi, ModeReg, 0x3D);
+	AntennaOn(spi);
+}
 static int mfrc522_probe(struct spi_device *spi)
 {
 	int status;
@@ -584,7 +596,8 @@ static int mfrc522_probe(struct spi_device *spi)
 	
 	dev = (struct spi_dev*)kmalloc(sizeof(struct spi_dev), GFP_KERNEL);	
 	dev->spi = spi;
-	
+
+	MFRC522_Init(spi);
 	/* device driver data */
 	spi_set_drvdata(spi, dev);
 	return 0;
