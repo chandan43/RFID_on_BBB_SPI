@@ -151,6 +151,9 @@ struct spi_dev {
 
 	int     status;
 	int     backLen;
+	int 	backDataLen; 
+	int 	keyLen;
+	int 	uidLen;
 };
 
 static void gpio_init_and_set(void)
@@ -233,7 +236,8 @@ static void Antennaoff(struct spi_device *spi)
 	ClearBitMask(spi,TxControlReg,0x03);
 }
 
-static int *MFRC522_ToCard(struct spi_device *spi,u8 command,int *sendData)
+static int *MFRC522_ToCard(struct spi_device *spi,u8 command,
+					int *sendData,int dataLen)
 {
 	int *backData; 
 	int lastBits;
@@ -262,7 +266,7 @@ static int *MFRC522_ToCard(struct spi_device *spi,u8 command,int *sendData)
 	/*No action, cancels current command Execution */
 	mfrc522_write_value(spi, CommandReg, PCD_IDLE); 
 
-	while (i < ARRAY_SIZE(sendData))
+	while (i < dataLen)
 		mfrc522_write_value(spi, FIFODataReg, sendData[i++]);
 		
 	mfrc522_write_value(spi, CommandReg, command);
@@ -300,6 +304,7 @@ static int *MFRC522_ToCard(struct spi_device *spi,u8 command,int *sendData)
 			backData = (int *)kmalloc(n, GFP_KERNEL);
 			while (i < n)
 				backData[i++] = mfrc522_read_value(spi, FIFODataReg);
+			dev->backDataLen = i;
 		}
 	}else{ 
 			dev->status = MI_ERR;
@@ -318,7 +323,7 @@ static int MFRC522_Request(struct spi_device *spi,int reqMode)
 	mfrc522_write_value(spi, BitFramingReg, 0x07);
 	TagType[0] = reqMode;
 	
-	MFRC522_ToCard(spi, PCD_TRANSCEIVE, TagType);
+	MFRC522_ToCard(spi, PCD_TRANSCEIVE, TagType,1);
 
 	if ((dev->status != MI_OK) | (dev->backLen != 0x10))
 		dev->status = MI_ERR;
@@ -339,11 +344,11 @@ static int *MFRC522_Anticoll(struct spi_device *spi)
 	serNum[0] = PICC_ANTICOLL;
 	serNum[1] = 0x20;  // page 14 
 
-	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, serNum);
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, serNum,2);
 
 	if (dev->status == MI_OK) {
 		int i = 0;
-		if (ARRAY_SIZE(backData) == 5)
+		if (dev->backDataLen == 5)
 			while (i < 4) {
 				serNumCheck = serNumCheck ^ backData[i++];
 			}
@@ -387,7 +392,7 @@ static int *CalulateCRC(struct spi_device *spi, int *pIndata)
 static int MFRC522_SelectTag(struct spi_device *spi, int *serNum)
 {
 	int *backData;
-	int buff[10];
+	int buff[8];
 	int *pOut;
 	int j = 2, i = 0;
 
@@ -403,7 +408,7 @@ static int MFRC522_SelectTag(struct spi_device *spi, int *serNum)
 
 	buff[j] = pOut[0];
 	buff[++j] = pOut[1];
-	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff);
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff,8);
 
 	if ((dev->status == MI_OK) && (dev->backLen == 0x18))
 		return backData[0];
@@ -427,7 +432,7 @@ static int MFRC522_Auth(struct spi_device *spi, int authMode,
 
 	/*Now we need to append the authKey which usually is 6 bytes of 0xFF */
 
-	while (i < ARRAY_SIZE(Sectorkey)) {
+	while (i < dev->keyLen) {
 		buff[j++] = Sectorkey[i++];
 	}
 
@@ -439,7 +444,7 @@ static int MFRC522_Auth(struct spi_device *spi, int authMode,
 
 	/*Now we start the authentication itself*/
 
-	MFRC522_ToCard(spi, PCD_AUTHENT,buff);
+	MFRC522_ToCard(spi, PCD_AUTHENT,buff,4);
 
 	/*Check if an error occurred */
 	if (dev->status != MI_OK) {
@@ -485,12 +490,12 @@ static void MFRC522_Read(struct spi_device *spi, int blockAddr)
 	recvData[2] = pOut[0];
 	recvData[3] = pOut[1];
 	
-	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, recvData);
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, recvData,4);
 	
 	if(dev->status != MI_OK )
 		pr_err("%s: Error while reading!\n",__func__);
 
-	if(ARRAY_SIZE(backData) == 16)
+	if(dev->backDataLen == 16)
 		pr_info("Sector %2X Data %s\n",blockAddr,backData);	
 		
 }
@@ -516,7 +521,7 @@ static void MFRC522_Write(struct spi_device *spi,
 	buff[3] = crc[1];
 
 	
-	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff);
+	backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff,4); //Buffsize is 4
 	
 	if ((dev->status != MI_OK) || (dev->backLen != 4) || (backData[0] & 0x0F) != 0x0A)
 			dev->status = MI_ERR;
@@ -532,7 +537,7 @@ static void MFRC522_Write(struct spi_device *spi,
 		buff[16] = crc[0];
 		buff[17] = crc[1];
 	
-		backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff);
+		backData = MFRC522_ToCard(spi, PCD_TRANSCEIVE, buff,18); //buff size is 18
 		if ((dev->status != MI_OK) || (dev->backLen != 4) || (backData[0] & 0x0F) != 0x0A)
 			pr_info("%s: Error while writing. !\n",__func__);
 		if (dev->status == MI_OK)
