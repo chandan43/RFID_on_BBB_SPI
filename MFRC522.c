@@ -117,7 +117,6 @@ enum PCD_Reg {
 	  Reserved33         = 0x3E,
 	  Reserved34 	     = 0x3F,	
 };
-
 /*GPIO Registers*/
 enum GPIO_OMAP_Reg { 
 	OMAP_GPIO_OE 	       = 0x0134,
@@ -160,16 +159,18 @@ static void gpio_init_and_set(void)
 {
 	unsigned int data = 0;
 
-	data = readl_relaxed(GPIO0 + OMAP_GPIO_OE);
+	data = readl_relaxed((void *)GPIO0 + OMAP_GPIO_OE);
 	data = data & 0xFFFFFDFF;
 	pr_debug("GPIO Init: Direction of pin is set: %x\n",data);
-	writel_relaxed(data, GPIO0 + OMAP_GPIO_OE);
+	writel_relaxed(data, (void *)GPIO0 + OMAP_GPIO_OE);
+
 
 	data = data | (1U << RST);
 
 	pr_debug("GPIO Set: Direction of pin is set: %x\n",data);
 
-	writel_relaxed(data, GPIO0 + OMAP_GPIO_SETDATAOUT); //High
+	writel_relaxed(data, (void *)GPIO0 + OMAP_GPIO_SETDATAOUT); //High
+	return;
 }
 /* -----------------------------------------------------------------
  * Read from a register
@@ -284,7 +285,7 @@ static int *MFRC522_ToCard(struct spi_device *spi,u8 command,
 	ClearBitMask(spi, BitFramingReg, 0x80); //page: 46
 
 	if (i != 0) {
-		if (mfrc522_read_value(spi,ErrorReg) & 0x1B == 0x00) 
+		if ( (mfrc522_read_value(spi,ErrorReg) & 0x1B) == 0x00 ) 
 				dev->status = MI_OK;
 		if (n & irqEn & 0x01)
 				dev->status = MI_NOTAGERR;
@@ -314,8 +315,6 @@ static int *MFRC522_ToCard(struct spi_device *spi,u8 command,
 }
 static int MFRC522_Request(struct spi_device *spi,int reqMode)
 {
-	int status;
-	int backBits;
 	int TagType[1];
 	
 	struct spi_dev *dev = spi_get_drvdata(spi);
@@ -348,13 +347,14 @@ static int *MFRC522_Anticoll(struct spi_device *spi)
 
 	if (dev->status == MI_OK) {
 		int i = 0;
-		if (dev->backDataLen == 5)
+		if (dev->backDataLen == 5) {
 			while (i < 4) {
 				serNumCheck = serNumCheck ^ backData[i++];
 			}
 			if (serNumCheck != backData[i])
 				dev->status = MI_ERR;
 			else dev->status = MI_OK;
+		}
 	}
 
 	return backData;
@@ -367,10 +367,11 @@ static int *CalulateCRC(struct spi_device *spi,
 				int *pIndata,int inputdataLen)
 {
 	int n, i = 0;
-	int pOutData[2];
+	int *pOutData;
 	ClearBitMask(spi, DivIrqReg, 0x04); // page 40
 	SetBitMask(spi, FIFOLevelReg, 0x80);
 
+	pOutData = (int *)kmalloc(2,GFP_KERNEL);
 	while (i < inputdataLen) {
 		mfrc522_write_value(spi, FIFODataReg, pIndata[i++]);
 	}
@@ -478,6 +479,7 @@ static void MFRC522_Read(struct spi_device *spi, int blockAddr)
 	int  recvData[4]; 
 	int *pOut;
 	int *backData;
+	int i = 0;
 	
 	struct spi_dev *dev = spi_get_drvdata(spi);
 #if DEBUG
@@ -496,8 +498,13 @@ static void MFRC522_Read(struct spi_device *spi, int blockAddr)
 	if(dev->status != MI_OK )
 		pr_err("%s: Error while reading!\n",__func__);
 
-	if(dev->backDataLen == 16)
-		pr_info("Sector %2X Data %s\n",blockAddr,backData);	
+	if(dev->backDataLen == 16){
+		pr_info("Sector : %2X Data :\n",blockAddr);
+		while(i < 16)
+			pr_info("%d",backData[i++]);
+		pr_info("\n");
+
+	}
 		
 }
 
