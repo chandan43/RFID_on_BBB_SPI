@@ -10,6 +10,9 @@
 #include <linux/slab.h>
 #include <linux/jiffies.h>
 #include <linux/delay.h>
+#include <linux/cdev.h>
+#include <linux/fs.h>
+#include <asm/uaccess.h>
 
 #define RST 10
 /*Debug*/
@@ -147,7 +150,7 @@ enum Status {
 #define DUMP       _IOW(RFID_MAGIC, 1, int)
 
 #define DRIVE_NAME "RFID_drv"
-
+#define CLASS_NAME "RFIDDEV"
 struct spi_dev {
 
 	struct spi_device       *spi;
@@ -161,7 +164,7 @@ struct spi_dev {
 	int 	uidLen;
 };
 
-struct spi_dev *dev == NULL;
+struct spi_dev *dev = NULL;
 
 static void gpio_init_and_set(void)
 {
@@ -599,7 +602,7 @@ static int MFRC522_Dump(struct spi_device *spi)
 
 	struct spi_dev *dev = spi_get_drvdata(spi);
 	/*This is the default key for authentication*/
-	key[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
+	int key[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
 	/*Scan for cards */
 	status = MFRC522_Request(spi, PICC_REQIDL);
 		
@@ -617,6 +620,7 @@ static int MFRC522_Dump(struct spi_device *spi)
 		dev->uidLen = 4;
 		MFRC522_StopCrypto1(spi);
 	}
+	return 0;
 }
 
 /* -----------------------------------------------------------------
@@ -642,7 +646,6 @@ static int dev_release(struct inode *inodep, struct file *filep){
 
 static long dev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
-	int ret;
 	if(_IOC_TYPE(cmd) != RFID_MAGIC)
 		return -ENOTTY;
 	if(_IOC_DIR(cmd)|_IOC_READ)
@@ -654,7 +657,7 @@ static long dev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	
 	switch(cmd){
 		case DUMP:
-			MFRC522_Dump(&dev->spi);
+			MFRC522_Dump(dev->spi);
 			break;
 	}
 	return 0;
@@ -671,7 +674,7 @@ static int chardev_init(void)
 {
 	int ret;
 	ret=alloc_chrdev_region(&rfid_dev,minornumber,1,DRIVE_NAME); 
-	ifi (ret){
+	if (ret){
 		pr_err("%s: Allocation of chardev region Failed\n",__func__);
 		return ret;
 	}
@@ -704,9 +707,9 @@ static int chardev_init(void)
 class_destroy:
 	class_destroy(charclass);
 cdev_del:
-	cdev_del(mycdev);
+	cdev_del(rfid_cdev);
 unregister:
-	unregister_chrdev_region(mydev,COUNT);
+	unregister_chrdev_region(rfid_dev,1);
 	return ret;
 	
 }
@@ -731,7 +734,7 @@ static int mfrc522_probe(struct spi_device *spi)
 	spi_set_drvdata(spi, dev);
 
 	/*IOCTL creation*/
-	char_dev_init();
+	chardev_init();
 	return 0;
 }
 
