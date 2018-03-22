@@ -142,6 +142,12 @@ enum Status {
 
 #define MAX_LEN 16
 
+/*IOCTL MICRO*/
+#define RFID_MAGIC  'R'
+#define DUMP       _IOW(RFID_MAGIC, 1, int)
+
+#define DRIVE_NAME "RFID_drv"
+
 struct spi_dev {
 
 	struct spi_device       *spi;
@@ -154,6 +160,8 @@ struct spi_dev {
 	int 	keyLen;
 	int 	uidLen;
 };
+
+struct spi_dev *dev == NULL;
 
 static void gpio_init_and_set(void)
 {
@@ -569,6 +577,8 @@ static void MFRC522_DumpClassic1K(struct spi_device *spi, int *key, int *uid)
 		i++;
 	}
 }
+
+
 static void MFRC522_Init(struct spi_device *spi)
 {
 	gpio_init_and_set();
@@ -581,10 +591,129 @@ static void MFRC522_Init(struct spi_device *spi)
 	mfrc522_write_value(spi, ModeReg, 0x3D);
 	AntennaOn(spi);
 }
+
+static int MFRC522_Dump(struct spi_device *spi)
+{
+	int status;
+	int *UID;
+
+	struct spi_dev *dev = spi_get_drvdata(spi);
+	/*This is the default key for authentication*/
+	key[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
+	/*Scan for cards */
+	status = MFRC522_Request(spi, PICC_REQIDL);
+		
+	if(status == MI_OK)
+		pr_info("%s: Card Detected .!\n",__func__);
+
+	/*Get the UID of the card*/
+	UID = MFRC522_Anticoll(spi);
+	
+	if(dev->status == MI_OK) {
+		pr_info("Card reads UID: %d %d %d %d\n",UID[0],UID[1],UID[2],UID[3]);
+		MFRC522_SelectTag(spi, UID);
+		MFRC522_DumpClassic1K(spi, key, UID);
+		dev->keyLen = 6;
+		dev->uidLen = 4;
+		MFRC522_StopCrypto1(spi);
+	}
+}
+
+/* -----------------------------------------------------------------
+ * Char Device Creation and IOCTL Call
+ * -----------------------------------------------------------------*/
+static int minornumber=0;
+static int majornumber;
+static dev_t rfid_dev;
+static struct cdev *rfid_cdev;
+struct class *charclass;
+struct device *chardevice;
+static int numdev=0;
+
+static int dev_open(struct inode *inodep, struct file *filep){
+	numdev++;
+	pr_info("%s: Device open %d times\n",__func__,numdev);
+	return 0;
+}
+static int dev_release(struct inode *inodep, struct file *filep){
+	pr_info("%s: Device closed successfully\n",__func__);
+	return 0;
+}
+
+static long dev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+{
+	int ret;
+	if(_IOC_TYPE(cmd) != RFID_MAGIC)
+		return -ENOTTY;
+	if(_IOC_DIR(cmd)|_IOC_READ)
+		if(!access_ok(VERIFY_WRITE,(void *)arg,_IOC_SIZE(cmd)))
+			return -EFAULT;
+	if(_IOC_DIR(cmd)|_IOC_WRITE)
+		if(!access_ok(VERIFY_READ,(void *)arg,_IOC_SIZE(cmd)))
+			return -EFAULT;
+	
+	switch(cmd){
+		case DUMP:
+			MFRC522_Dump(&dev->spi);
+			break;
+	}
+	return 0;
+}
+static struct file_operations fops = {
+	.owner   	= THIS_MODULE,
+	.open    	= dev_open,
+	.release 	= dev_release,
+	.unlocked_ioctl	= dev_ioctl,
+};
+
+
+static int chardev_init(void)
+{
+	int ret;
+	ret=alloc_chrdev_region(&rfid_dev,minornumber,1,DRIVE_NAME); 
+	ifi (ret){
+		pr_err("%s: Allocation of chardev region Failed\n",__func__);
+		return ret;
+	}
+	majornumber=MAJOR(rfid_dev);
+	pr_info("%s: Device is registered with %d Major Number\n",__func__,majornumber);
+	rfid_cdev=cdev_alloc();
+	if (!rfid_cdev){
+		pr_err("%s: CDEV Allocation Failed\n",__func__);
+		goto unregister;
+	}
+	cdev_init(rfid_cdev,&fops);
+	ret=cdev_add(rfid_cdev,rfid_dev,1);
+	if(ret){
+		pr_err("%s: Cdev is not added successfully\n",__func__);
+		goto unregister;
+	}
+	charclass=class_create(THIS_MODULE,CLASS_NAME);
+	if(IS_ERR(charclass)){
+		pr_err("%s: Class creation failed\n",__func__);
+		goto cdev_del;
+	}
+	chardevice=device_create(charclass,NULL,MKDEV(majornumber,minornumber),
+							NULL,DRIVE_NAME);
+	if(IS_ERR(chardevice)){
+		pr_err("%s: Device creation failed\n",__func__);
+		goto class_destroy;
+	}
+	return 0;
+
+class_destroy:
+	class_destroy(charclass);
+cdev_del:
+	cdev_del(mycdev);
+unregister:
+	unregister_chrdev_region(mydev,COUNT);
+	return ret;
+	
+}
+
 static int mfrc522_probe(struct spi_device *spi)
 {
 	int status;
-	struct spi_dev *dev; 
 	/*setup SPI mode and clock rate*/            
         status = spi_setup(spi);
         if (status < 0) { 
@@ -600,11 +729,19 @@ static int mfrc522_probe(struct spi_device *spi)
 	MFRC522_Init(spi);
 	/* device driver data */
 	spi_set_drvdata(spi, dev);
+
+	/*IOCTL creation*/
+	char_dev_init();
 	return 0;
 }
 
 static int mfrc522_remove(struct spi_device *spi)
 {
+	device_destroy(charclass, MKDEV(majornumber,minornumber));
+	class_destroy(charclass);
+	cdev_del(rfid_cdev);
+	unregister_chrdev_region(rfid_dev, 1);
+	pr_info("%s: RFID Device Driver Removed successfully\n",__func__);
 	return 0;
 } 
 static const struct of_device_id mfrc522_of_match[]= {
