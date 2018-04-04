@@ -136,6 +136,8 @@ enum GPIO_BASE_Addr {
 	GPIO3		       = 0x481AE000,
 };
 
+static void *gbank_base;
+
 /*MIFARE Status */
 enum Status {
 	MI_OK       = 0,
@@ -170,17 +172,17 @@ static void gpio_init_and_set(void)
 {
 	unsigned int data = 0;
 
-	data = readl_relaxed((void *)GPIO0 + OMAP_GPIO_OE);
+	data = readl_relaxed(gbank_base + OMAP_GPIO_OE);
 	data = data & 0xFFFFFDFF;
 	pr_debug("GPIO Init: Direction of pin is set: %x\n",data);
-	writel_relaxed(data, (void *)GPIO0 + OMAP_GPIO_OE);
+	writel_relaxed(data, gbank_base + OMAP_GPIO_OE);
 
 
 	data = data | (1U << RST);
 
 	pr_debug("GPIO Set: Direction of pin is set: %x\n",data);
 
-	writel_relaxed(data, (void *)GPIO0 + OMAP_GPIO_SETDATAOUT); //High
+	writel_relaxed(data, gbank_base + OMAP_GPIO_SETDATAOUT); //High
 	return;
 }
 /* -----------------------------------------------------------------
@@ -210,8 +212,8 @@ static int mfrc522_write_value(struct spi_device *spi, u8 reg,u8 value)
  * -----------------------------------------------------------------*/
 static void MFRC522_Reset(struct spi_device *spi)
 {
-	struct spi_dev *dev = spi_get_drvdata(spi);
-	mfrc522_write_value(dev->spi,CommandReg,PCD_RESETPHASE);
+	mfrc522_write_value(spi,CommandReg,PCD_RESETPHASE);
+	mfrc522_write_value(spi,CommandReg,PCD_RESETPHASE);
 	dev_info(&spi->dev,"Device Reset successfull\n");
 }
 
@@ -605,7 +607,7 @@ static int MFRC522_Dump(struct spi_device *spi)
 	int key[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
 	/*Scan for cards */
 	status = MFRC522_Request(spi, PICC_REQIDL);
-		
+	
 	if(status == MI_OK)
 		pr_info("%s: Card Detected .!\n",__func__);
 
@@ -729,12 +731,16 @@ static int mfrc522_probe(struct spi_device *spi)
 	dev = (struct spi_dev*)kmalloc(sizeof(struct spi_dev), GFP_KERNEL);	
 	dev->spi = spi;
 
+	gbank_base = ioremap(GPIO0, 4095); /* ioremap(unsigned long port, unsigned long size)*/	
+	if(!gbank_base)
+		return -1;
 	MFRC522_Init(spi);
 	/* device driver data */
 	spi_set_drvdata(spi, dev);
 
 	/*IOCTL creation*/
 	chardev_init();
+	pr_info("Device Intialization successfull\n");
 	return 0;
 }
 

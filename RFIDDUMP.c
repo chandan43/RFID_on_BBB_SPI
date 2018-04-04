@@ -12,7 +12,7 @@
 #define DUMP       _IOW(RFID_MAGIC, 1, int)
 
 #define DRIVE_NAME "RFID_drv"
-#define Device_path "/dev/RFID_dev"
+#define Device_path "/dev/RFID_drv"
 #define err_handler(en,msg) do{errno=en;perror(msg);exit(EXIT_SUCCESS);}while(0) 
 int main(){
 	int fd,ret,ch,i;
