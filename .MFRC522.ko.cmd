@@ -1,1 +1,0 @@
-cmd_/home/RFID_on_BBB_SPI/MFRC522.ko := arm-linux-ld -EL -r  -T ./scripts/module-common.lds --build-id  -o /home/RFID_on_BBB_SPI/MFRC522.ko /home/RFID_on_BBB_SPI/MFRC522.o /home/RFID_on_BBB_SPI/MFRC522.mod.o

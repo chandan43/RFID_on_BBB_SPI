@@ -1,2 +1,0 @@
-/home/RFID_on_BBB_SPI/MFRC522.ko
-/home/RFID_on_BBB_SPI/MFRC522.o
